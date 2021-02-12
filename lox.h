@@ -1,4 +1,11 @@
-#include <openxr/openxr.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef LOX_STATIC
+#define LOX_API static XRAPI_ATTR
+#else
+#define LOX_API XRAPI_ATTR
+#endif
 
 #define XR_FOREACH(X)\
   X(xrGetInstanceProcAddr)\
@@ -225,3 +232,284 @@
   X(xrTryGetPerceptionAnchorFromSpatialAnchorMSFT)\
   X(xrEnumerateColorSpacesFB)\
   X(xrSetColorSpaceFB)
+
+#define XR_CURRENT_LOADER_API_LAYER_VERSION 1
+#define XR_CURRENT_LOADER_RUNTIME_VERSION 1
+
+typedef enum XrLoaderInterfaceStructs {
+  XR_LOADER_INTERFACE_STRUCT_UNINITIALIZED = 0,
+  XR_LOADER_INTERFACE_STRUCT_LOADER_INFO,
+  XR_LOADER_INTERFACE_STRUCT_API_LAYER_REQUEST,
+  XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST,
+  XR_LOADER_INTERFACE_STRUCT_API_LAYER_CREATE_INFO,
+  XR_LOADER_INTERFACE_STRUCT_API_LAYER_NEXT_INFO
+} XrLoaderInterfaceStructs;
+
+#define XR_LOADER_INFO_STRUCT_VERSION 1
+typedef struct XrNegotiateLoaderInfo {
+  XrLoaderInterfaceStructs structType;
+  uint32_t structVersion;
+  size_t structSize;
+  uint32_t minInterfaceVersion;
+  uint32_t maxInterfaceVersion;
+  XrVersion minApiVersion;
+  XrVersion maxApiVersion;
+} XrNegotiateLoaderInfo;
+
+#define XR_RUNTIME_INFO_STRUCT_VERSION 1
+typedef struct XrNegotiateRuntimeRequest {
+  XrLoaderInterfaceStructs structType;
+  uint32_t structVersion;
+  size_t structSize;
+  uint32_t runtimeIntefaceVersion;
+  uint32_t runtimeApiVersion;
+  PFN_xrGetInstanceProcAddr getInstanceProcAddr;
+} XrNegotiateRuntimeRequest;
+
+typedef XrResult FN_xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNegotiateRuntimeRequest* runtimeInfo);
+
+LOX_API XrResult XRAPI_CALL xrInitializeLoaderKHR(const XrLoaderInitInfoBaseHeaderKHR* info) {
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrEnumerateApiLayerProperties(uint32_t capacity, uint32_t* count, XrApiLayerProperties* properties) {
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* layer, uint32_t capacity, uint32_t* count, XrExtensionProperties* properties) {
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance) {
+  if (!info || !instance) {
+    return XR_ERROR_VALIDATION_FAILURE;
+  }
+
+  if (info->applicationInfo.apiVersion > XR_CURRENT_API_VERSION) {
+    return XR_ERROR_API_VERSION_UNSUPPORTED;
+  }
+
+  char filename[1024];
+  char buffer[4096];
+  const char* leaf = "/openxr/1/active_runtime.json";
+
+#if defined __linux__
+  int fd = -1;
+
+  if (fd < 0) {
+    const char* path = getenv("XR_RUNTIME_JSON");
+    if (path) fd = open(path, O_RDONLY);
+  }
+
+  if (fd < 0) {
+    const char* home = getenv("XDG_CONFIG_HOME");
+
+    if (home) {
+      size_t length = strlen(home) + strlen(leaf);
+      if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+      stpcpy(stpcpy(filename, home), leaf);
+      fd = open(filename, O_RDONLY);
+    } else {
+      const char* fallback = getenv("HOME");
+      const char* config = "/.config";
+
+      if (fallback) {
+        size_t length = strlen(fallback) + strlen(config) + strlen(leaf);
+        if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+        stpcpy(stpcpy(stpcpy(filename, fallback), config), leaf);
+        fd = open(filename, O_RDONLY);
+      }
+    }
+  }
+
+  if (fd < 0) {
+    const char* dirs = getenv("XDG_CONFIG_DIRS");
+
+    if (dirs) {
+      char* colon;
+      // TODO handle final token
+      while ((colon = strchr(dirs, ':'))) {
+        if (colon == dirs) {
+          dirs++;
+          continue;
+        }
+
+        size_t dirLength = colon - dirs;
+        size_t length = dirLength + strlen(leaf);
+        if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+        memcpy(filename, dirs, dirLength);
+        strcpy(filename + dirLength, leaf);
+
+        fd = open(filename, O_RDONLY);
+        if (fd >= 0) break;
+
+        dirs = colon + 1;
+      }
+    } else {
+      const char* fallback = "/etc/xdg";
+      size_t length = strlen(fallback) + strlen(leaf);
+      if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+      stpcpy(stpcpy(filename, fallback), leaf);
+      fd = open(filename, O_RDONLY);
+    }
+  }
+
+  if (fd < 0) {
+    const char* etc = "/etc";
+    size_t length = strlen(etc) + strlen(leaf);
+    if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+    stpcpy(stpcpy(filename, etc), leaf);
+    fd = open(filename, O_RDONLY);
+  }
+
+  if (fd < 0) {
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    close(fd);
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  size_t size = st.st_size;
+  if (size > sizeof(buffer)) {
+    close(fd);
+    return XR_ERROR_OUT_OF_MEMORY;
+  }
+
+  size_t n = 0;
+  while (n < size) {
+    ssize_t bytes = read(fd, buffer + n, size - n);
+    if (bytes < 0) {
+      close(fd);
+      return XR_ERROR_FILE_ACCESS_ERROR;
+    }
+    n += bytes;
+  }
+  close(fd);
+#endif
+
+  jsmntok_t tokens[256];
+  jsmn_parser parser;
+  jsmn_init(&parser);
+  int result = jsmn_parse(&parser, buffer, size, tokens, sizeof(tokens) / sizeof(tokens[0]));
+  switch (result) {
+    case JSMN_ERROR_NOMEM: return XR_ERROR_OUT_OF_MEMORY;
+    case JSMN_ERROR_INVAL: return XR_ERROR_FILE_CONTENTS_INVALID;
+    case JSMN_ERROR_PART: return XR_ERROR_FILE_CONTENTS_INVALID;
+    case 0: return XR_ERROR_FILE_CONTENTS_INVALID;
+    default: break;
+  }
+
+  if (tokens[0].type != JSMN_OBJECT) {
+    return XR_ERROR_FILE_CONTENTS_INVALID;
+  }
+
+  jsmntok_t* version = NULL;
+  jsmntok_t* library = NULL;
+
+  int tokenCount = result;
+  for (int i = 1; i < tokenCount; i++) {
+    jsmntok_t* token = &tokens[i];
+    const char* key = buffer + token->start;
+    size_t length = token->end - token->start;
+    token++;
+
+    // TODO parse `instance_extensions` and `functions` keys
+    if (length == strlen("file_format_version") && !strncmp(key, "file_format_version", length)) {
+      if (token->type != JSMN_STRING) return XR_ERROR_FILE_CONTENTS_INVAILD;
+      version = token++;
+    } else if (length == strlen("runtime") && !strncmp(key, "runtime", length)) {
+      if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVAILD;
+      for (int j = (token++)->size; j > 0; j--) {
+        const char* key = buffer + token->start;
+        size_t length = token->end - token->start;
+        token++;
+
+        if (length == strlen("library_path") && !strncmp(key, "library_path", length)) {
+          library = token++;
+        } else {
+          for (int n = 1; n > 0; n--, token++) {
+            switch (token->type) {
+              case JSMN_OBJECT: n += 2 * token->size; break;
+              case JSMN_ARRAY: n += token->size; break;
+              default: break;
+            }
+          }
+        }
+      }
+    } else {
+      for (int n = 1; n > 0; n--, token++) {
+        switch (token->type) {
+          case JSMN_OBJECT: n += 2 * token->size; break;
+          case JSMN_ARRAY: n += token->size; break;
+          default: break;
+        }
+      }
+    }
+  }
+
+  if (!version || !library || strncmp(buffer + version->start, "1.0.0", version->end - version->start)) {
+    return XR_ERROR_FILE_CONTENTS_INVALID;
+  }
+
+  FN_xrNegotiateLoaderRuntimeInterface* negotiate;
+
+#ifdef __linux__
+  size_t length = library->end - library->start;
+  if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+
+  if (buffer[library->start] == '/') {
+    memcpy(filename, buffer + library->start, length);
+  } else if (memchr(buffer + library->start, '/', length)) {
+    char* slash = strrchr(filename '/');
+    slash = slash ? slash + 1 : filename;
+    if (slash - filename + length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+    memcpy(slash, buffer + library->start, length);
+  } else {
+    memcpy(filename, buffer + library->start, length);
+  }
+
+  void* library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
+  if (!library) return XR_ERROR_INSTANCE_LOST;
+
+  negotiate = dlsym(library, "xrNegotiateLoaderRuntimeInteface");
+  if (!negotiate) return XR_ERROR_INSTANCE_LOST;
+#endif
+
+  XrNegotiateLoaderInfo loaderInfo = {
+    .structType = XR_LOADER_INTERFACE_STRUCT_LOADER_INFO,
+    .structVersion = XR_LOADER_INFO_STRUCT_VERSION,
+    .structSize = sizeof(loaderInfo),
+    .minInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION,
+    .maxInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION,
+    .minApiVersion = XR_MAKE_VERSION(1, 0, 0),
+    .maxApiVersion = XR_MAKE_VERSION(1, 0x3ff, 0xfff)
+  };
+
+  XrNegotiateRuntimeRequest runtimeInfo = {
+    .structType = XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST,
+    .structVersion = XR_RUNTIME_INFO_STRUCT_VERSION,
+    .structSize = sizeof(request)
+  };
+
+  XrResult result = negotiate(&loaderInfo, &runtimeInfo);
+  if (XR_FAILED(result)) return XR_ERROR_INSTANCE_LOST;
+  if (!runtimeInfo.getInstanceProcAddr) return XR_ERROR_FILE_CONTENTS_INVALID;
+  // TODO check runtime version
+
+  // TODO load api layers
+
+  // TODO ensure enabled extensions are supported
+
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrDestroyInstance(XrInstance instance) {
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* fn) {
+  return XR_SUCCESS;
+}
