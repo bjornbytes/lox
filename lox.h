@@ -1,11 +1,22 @@
 #include <stdlib.h>
 #include <string.h>
+#ifdef __linux__
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <dlfcn.h>
+#else
+#error "Unsupported platform"
+#endif
 
 #ifdef LOX_STATIC
 #define LOX_API static XRAPI_ATTR
 #else
 #define LOX_API XRAPI_ATTR
 #endif
+
+// OpenXR
 
 #define XR_FOREACH(X)\
   X(xrGetInstanceProcAddr)\
@@ -268,26 +279,15 @@ typedef struct XrNegotiateRuntimeRequest {
 
 typedef XrResult FN_xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNegotiateRuntimeRequest* runtimeInfo);
 
-LOX_API XrResult XRAPI_CALL xrInitializeLoaderKHR(const XrLoaderInitInfoBaseHeaderKHR* info) {
-  return XR_SUCCESS;
-}
+// Helpers
 
-LOX_API XrResult XRAPI_CALL xrEnumerateApiLayerProperties(uint32_t capacity, uint32_t* count, XrApiLayerProperties* properties) {
-  return XR_SUCCESS;
-}
+static struct {
+  void* library;
+  XrNegotiateRuntimeRequest runtimeInfo;
+} state;
 
-LOX_API XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* layer, uint32_t capacity, uint32_t* count, XrExtensionProperties* properties) {
-  return XR_SUCCESS;
-}
-
-LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance) {
-  if (!info || !instance) {
-    return XR_ERROR_VALIDATION_FAILURE;
-  }
-
-  if (info->applicationInfo.apiVersion > XR_CURRENT_API_VERSION) {
-    return XR_ERROR_API_VERSION_UNSUPPORTED;
-  }
+static XrResult loadRuntime() {
+  if (state.library) return XR_SUCCESS;
 
   char filename[1024];
   char buffer[4096];
@@ -388,13 +388,15 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
     n += bytes;
   }
   close(fd);
+#else
+#error "Unsupported platform"
 #endif
 
   jsmntok_t tokens[256];
   jsmn_parser parser;
   jsmn_init(&parser);
-  int result = jsmn_parse(&parser, buffer, size, tokens, sizeof(tokens) / sizeof(tokens[0]));
-  switch (result) {
+  int tokenCount = jsmn_parse(&parser, buffer, size, tokens, sizeof(tokens) / sizeof(tokens[0]));
+  switch (tokenCount) {
     case JSMN_ERROR_NOMEM: return XR_ERROR_OUT_OF_MEMORY;
     case JSMN_ERROR_INVAL: return XR_ERROR_FILE_CONTENTS_INVALID;
     case JSMN_ERROR_PART: return XR_ERROR_FILE_CONTENTS_INVALID;
@@ -409,7 +411,6 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
   jsmntok_t* version = NULL;
   jsmntok_t* library = NULL;
 
-  int tokenCount = result;
   for (int i = 1; i < tokenCount; i++) {
     jsmntok_t* token = &tokens[i];
     const char* key = buffer + token->start;
@@ -418,10 +419,10 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
 
     // TODO parse `instance_extensions` and `functions` keys
     if (length == strlen("file_format_version") && !strncmp(key, "file_format_version", length)) {
-      if (token->type != JSMN_STRING) return XR_ERROR_FILE_CONTENTS_INVAILD;
+      if (token->type != JSMN_STRING) return XR_ERROR_FILE_CONTENTS_INVALID;
       version = token++;
     } else if (length == strlen("runtime") && !strncmp(key, "runtime", length)) {
-      if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVAILD;
+      if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVALID;
       for (int j = (token++)->size; j > 0; j--) {
         const char* key = buffer + token->start;
         size_t length = token->end - token->start;
@@ -463,7 +464,7 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
   if (buffer[library->start] == '/') {
     memcpy(filename, buffer + library->start, length);
   } else if (memchr(buffer + library->start, '/', length)) {
-    char* slash = strrchr(filename '/');
+    char* slash = strrchr(filename, '/');
     slash = slash ? slash + 1 : filename;
     if (slash - filename + length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
     memcpy(slash, buffer + library->start, length);
@@ -471,11 +472,13 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
     memcpy(filename, buffer + library->start, length);
   }
 
-  void* library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
-  if (!library) return XR_ERROR_INSTANCE_LOST;
+  state.library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
+  if (!state.library) return XR_ERROR_INSTANCE_LOST;
 
-  negotiate = dlsym(library, "xrNegotiateLoaderRuntimeInteface");
+  negotiate = dlsym(state.library, "xrNegotiateLoaderRuntimeInteface");
   if (!negotiate) return XR_ERROR_INSTANCE_LOST;
+#else
+#error "Unsupported platform"
 #endif
 
   XrNegotiateLoaderInfo loaderInfo = {
@@ -488,15 +491,56 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
     .maxApiVersion = XR_MAKE_VERSION(1, 0x3ff, 0xfff)
   };
 
-  XrNegotiateRuntimeRequest runtimeInfo = {
+  state.runtimeInfo = (XrNegotiateRuntimeRequest) {
     .structType = XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST,
     .structVersion = XR_RUNTIME_INFO_STRUCT_VERSION,
-    .structSize = sizeof(request)
+    .structSize = sizeof(state.runtimeInfo)
   };
 
-  XrResult result = negotiate(&loaderInfo, &runtimeInfo);
+  XrResult result = negotiate(&loaderInfo, &state.runtimeInfo);
   if (XR_FAILED(result)) return XR_ERROR_INSTANCE_LOST;
-  if (!runtimeInfo.getInstanceProcAddr) return XR_ERROR_FILE_CONTENTS_INVALID;
+  if (!state.runtimeInfo.getInstanceProcAddr) return XR_ERROR_FILE_CONTENTS_INVALID;
+
+  return XR_SUCCESS;
+}
+
+static XrResult unloadRuntime() {
+  if (!state.library) return XR_SUCCESS;
+#ifdef __linux__
+  dlclose(state.library);
+#else
+#error "Unsupported platform"
+#endif
+  state.library = NULL;
+  return XR_SUCCESS;
+}
+
+// Entry
+
+LOX_API XrResult XRAPI_CALL xrInitializeLoaderKHR(const XrLoaderInitInfoBaseHeaderKHR* info) {
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrEnumerateApiLayerProperties(uint32_t capacity, uint32_t* count, XrApiLayerProperties* properties) {
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* layer, uint32_t capacity, uint32_t* count, XrExtensionProperties* properties) {
+  return XR_SUCCESS;
+}
+
+LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance) {
+  if (!info || !instance) {
+    return XR_ERROR_VALIDATION_FAILURE;
+  }
+
+  if (info->applicationInfo.apiVersion > XR_CURRENT_API_VERSION) {
+    return XR_ERROR_API_VERSION_UNSUPPORTED;
+  }
+
+  XrResult result = loadRuntime();
+  if (XR_FAILED(result)) return result;
+
   // TODO check runtime version
 
   // TODO load api layers
@@ -507,7 +551,7 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
 }
 
 LOX_API XrResult XRAPI_CALL xrDestroyInstance(XrInstance instance) {
-  return XR_SUCCESS;
+  return unloadRuntime();
 }
 
 LOX_API XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* fn) {
