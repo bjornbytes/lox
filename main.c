@@ -15,6 +15,6 @@ int main(int argc, char** argv) {
 
   XrResult result = xrCreateInstance(&info, &instance);
   if (XR_FAILED(result)) return 1;
-  xrDestroyInstance(&instance);
+  xrDestroyInstance(instance);
   return 0;
 }
