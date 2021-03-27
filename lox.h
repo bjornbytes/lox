@@ -273,7 +273,7 @@ typedef struct XrNegotiateRuntimeRequest {
   uint32_t structVersion;
   size_t structSize;
   uint32_t runtimeIntefaceVersion;
-  uint32_t runtimeApiVersion;
+  XrVersion runtimeApiVersion;
   PFN_xrGetInstanceProcAddr getInstanceProcAddr;
 } XrNegotiateRuntimeRequest;
 
@@ -281,9 +281,15 @@ typedef XrResult FN_xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInf
 
 // Helpers
 
+
 static struct {
   void* library;
   XrNegotiateRuntimeRequest runtimeInfo;
+  struct {
+#define LOX_FN(fn) PFN_##fn fn;
+    XR_FOREACH(LOX_FN)
+#undef LOX_FN
+  } dispatch;
 } state;
 
 static XrResult loadRuntime() {
@@ -326,15 +332,16 @@ static XrResult loadRuntime() {
     const char* dirs = getenv("XDG_CONFIG_DIRS");
 
     if (dirs) {
-      char* colon;
-      // TODO handle final token
-      while ((colon = strchr(dirs, ':'))) {
-        if (colon == dirs) {
+      while (1) {
+        char* sep = strchr(dirs, ':');
+        if (!sep) sep = strchr(dirs, '\0');
+
+        if (sep == dirs) {
           dirs++;
           continue;
         }
 
-        size_t dirLength = colon - dirs;
+        size_t dirLength = sep - dirs;
         size_t length = dirLength + strlen(leaf);
         if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
         memcpy(filename, dirs, dirLength);
@@ -343,7 +350,11 @@ static XrResult loadRuntime() {
         fd = open(filename, O_RDONLY);
         if (fd >= 0) break;
 
-        dirs = colon + 1;
+        if (*sep == '\0') {
+          break;
+        } else {
+          dirs = sep + 1;
+        }
       }
     } else {
       const char* fallback = "/etc/xdg";
@@ -463,19 +474,22 @@ static XrResult loadRuntime() {
 
   if (buffer[library->start] == '/') {
     memcpy(filename, buffer + library->start, length);
+    filename[length] = '\0';
   } else if (memchr(buffer + library->start, '/', length)) {
     char* slash = strrchr(filename, '/');
     slash = slash ? slash + 1 : filename;
     if (slash - filename + length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
     memcpy(slash, buffer + library->start, length);
+    slash[length] = '\0';
   } else {
     memcpy(filename, buffer + library->start, length);
+    filename[length] = '\0';
   }
 
   state.library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
   if (!state.library) return XR_ERROR_INSTANCE_LOST;
 
-  negotiate = dlsym(state.library, "xrNegotiateLoaderRuntimeInteface");
+  negotiate = dlsym(state.library, "xrNegotiateLoaderRuntimeInterface");
   if (!negotiate) return XR_ERROR_INSTANCE_LOST;
 #else
 #error "Unsupported platform"
@@ -484,7 +498,7 @@ static XrResult loadRuntime() {
   XrNegotiateLoaderInfo loaderInfo = {
     .structType = XR_LOADER_INTERFACE_STRUCT_LOADER_INFO,
     .structVersion = XR_LOADER_INFO_STRUCT_VERSION,
-    .structSize = sizeof(loaderInfo),
+    .structSize = sizeof(XrNegotiateLoaderInfo),
     .minInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION,
     .maxInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION,
     .minApiVersion = XR_MAKE_VERSION(1, 0, 0),
@@ -494,7 +508,7 @@ static XrResult loadRuntime() {
   state.runtimeInfo = (XrNegotiateRuntimeRequest) {
     .structType = XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST,
     .structVersion = XR_RUNTIME_INFO_STRUCT_VERSION,
-    .structSize = sizeof(state.runtimeInfo)
+    .structSize = sizeof(XrNegotiateRuntimeRequest)
   };
 
   XrResult result = negotiate(&loaderInfo, &state.runtimeInfo);
@@ -511,7 +525,7 @@ static XrResult unloadRuntime() {
 #else
 #error "Unsupported platform"
 #endif
-  state.library = NULL;
+  memset(&state, 0, sizeof(state));
   return XR_SUCCESS;
 }
 
@@ -530,7 +544,7 @@ LOX_API XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* l
 }
 
 LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance) {
-  if (!info || !instance) {
+  if (!info || !instance || info->type != XR_TYPE_INSTANCE_CREATE_INFO) {
     return XR_ERROR_VALIDATION_FAILURE;
   }
 
@@ -547,6 +561,19 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
 
   // TODO ensure enabled extensions are supported
 
+  PFN_xrCreateInstance rt_xrCreateInstance;
+  result = state.runtimeInfo.getInstanceProcAddr(XR_NULL_HANDLE, "xrCreateInstance", (PFN_xrVoidFunction*) &rt_xrCreateInstance);
+  if (XR_FAILED(result)) return unloadRuntime(), result;
+
+  result = rt_xrCreateInstance(info, instance);
+  if (XR_FAILED(result)) return unloadRuntime(), *instance = XR_NULL_HANDLE, result;
+
+  #define LOX_LOAD(fn)\
+    result = state.runtimeInfo.getInstanceProcAddr(*instance, #fn, (PFN_xrVoidFunction*) &state.dispatch.fn);\
+    if (XR_FAILED(result)) return unloadRuntime(), *instance = XR_NULL_HANDLE, result;
+
+  XR_FOREACH(LOX_LOAD)
+
   return XR_SUCCESS;
 }
 
@@ -554,6 +581,19 @@ LOX_API XrResult XRAPI_CALL xrDestroyInstance(XrInstance instance) {
   return unloadRuntime();
 }
 
-LOX_API XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* fn) {
-  return XR_SUCCESS;
+static uint64_t hash64(const void* data, size_t length) {
+  const uint8_t* bytes = (const uint8_t*) data;
+  uint64_t hash = 0xcbf29ce484222325;
+  for (size_t i = 0; i < length; i++) {
+    hash = (hash ^ bytes[i]) * 0x100000001b3;
+  }
+  return hash;
+}
+
+LOX_API XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* p) {
+  if (!instance || !state.library) return XR_ERROR_HANDLE_INVALID;
+  uint64_t hash = hash64(name, strlen(name));
+  #define LOX_MATCH(fn) if (hash == hash64(#fn, strlen(#fn))) return *(PFN_##fn*) p = state.dispatch.fn, XR_SUCCESS;
+  XR_FOREACH(LOX_MATCH)
+  return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
