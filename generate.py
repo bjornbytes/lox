@@ -16,7 +16,7 @@ with urllib.request.urlopen('https://raw.githubusercontent.com/KhronosGroup/Open
     with open(filename, 'r') as f:
         contents = f.read()
 
-    contents = re.sub('(  X\(.+\)\\n)+', X[:-2] + '\n', contents)
+    contents = re.sub(r'(  X\(.+\)\\?\n)+', X[:-2] + '\n', contents)
 
     with open(filename, 'w') as f:
         f.write(contents)
