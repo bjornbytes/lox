@@ -18,12 +18,54 @@
 
 // OpenXR
 
-#define XR_FOREACH(X)\
-  X(xrGetInstanceProcAddr)\
-  X(xrEnumerateApiLayerProperties)\
-  X(xrEnumerateInstanceExtensionProperties)\
-  X(xrCreateInstance)\
-  X(xrDestroyInstance)\
+// === 8< ===
+#ifdef XR_USE_TIMESPEC
+#define XR_FOREACH_TIMESPEC(X)\
+  X(xrConvertTimespecTimeToTimeKHR)\
+  X(xrConvertTimeToTimespecTimeKHR)
+#else
+#define XR_FOREACH_TIMESPEC(X)
+#endif
+
+#ifdef XR_USE_GRAPHICS_API_D3D11
+#define XR_FOREACH_D3D11(X)\
+  X(xrGetD3D11GraphicsRequirementsKHR)
+#else
+#define XR_FOREACH_D3D11(X)
+#endif
+
+#ifdef XR_USE_GRAPHICS_API_OPENGL_ES
+#define XR_FOREACH_ES(X)\
+  X(xrGetOpenGLESGraphicsRequirementsKHR)
+#else
+#define XR_FOREACH_ES(X)
+#endif
+
+#ifdef XR_USE_GRAPHICS_API_VULKAN
+#define XR_FOREACH_VULKAN(X)\
+  X(xrGetVulkanInstanceExtensionsKHR)\
+  X(xrGetVulkanDeviceExtensionsKHR)\
+  X(xrGetVulkanGraphicsDeviceKHR)\
+  X(xrGetVulkanGraphicsRequirementsKHR)
+#else
+#define XR_FOREACH_VULKAN(X)
+#endif
+
+#ifdef XR_USE_GRAPHICS_API_D3D12
+#define XR_FOREACH_D3D12(X)\
+  X(xrGetD3D12GraphicsRequirementsKHR)
+#else
+#define XR_FOREACH_D3D12(X)
+#endif
+
+#ifdef XR_USE_GRAPHICS_API_OPENGL
+#define XR_FOREACH_OPENGL(X)\
+  X(xrGetOpenGLGraphicsRequirementsKHR)
+#else
+#define XR_FOREACH_OPENGL(X)
+#endif
+
+#define XR_FOREACH_BASE(X)\
   X(xrResultToString)\
   X(xrStructureTypeToString)\
   X(xrGetInstanceProperties)\
@@ -60,8 +102,6 @@
   X(xrStringToPath)\
   X(xrPathToString)\
   X(xrGetReferenceSpaceBoundsRect)\
-  X(xrSetAndroidApplicationThreadKHR)\
-  X(xrCreateSwapchainAndroidSurfaceKHR)\
   X(xrGetActionStateBoolean)\
   X(xrGetActionStateFloat)\
   X(xrGetActionStateVector2f)\
@@ -76,14 +116,6 @@
   X(xrSyncActions)\
   X(xrEnumerateBoundSourcesForAction)\
   X(xrGetInputSourceLocalizedName)\
-  X(xrGetVulkanInstanceExtensionsKHR)\
-  X(xrGetVulkanDeviceExtensionsKHR)\
-  X(xrGetVulkanGraphicsDeviceKHR)\
-  X(xrGetOpenGLGraphicsRequirementsKHR)\
-  X(xrGetOpenGLESGraphicsRequirementsKHR)\
-  X(xrGetVulkanGraphicsRequirementsKHR)\
-  X(xrGetD3D11GraphicsRequirementsKHR)\
-  X(xrGetD3D12GraphicsRequirementsKHR)\
   X(xrPerfSettingsSetPerformanceLevelEXT)\
   X(xrThermalGetTemperatureTrendEXT)\
   X(xrSetDebugUtilsObjectNameEXT)\
@@ -93,13 +125,6 @@
   X(xrSessionBeginDebugUtilsLabelRegionEXT)\
   X(xrSessionEndDebugUtilsLabelRegionEXT)\
   X(xrSessionInsertDebugUtilsLabelEXT)\
-  X(xrConvertTimeToWin32PerformanceCounterKHR)\
-  X(xrConvertWin32PerformanceCounterToTimeKHR)\
-  X(xrCreateVulkanInstanceKHR)\
-  X(xrCreateVulkanDeviceKHR)\
-  X(xrGetVulkanGraphicsDevice2KHR)\
-  X(xrConvertTimeToTimespecTimeKHR)\
-  X(xrConvertTimespecTimeToTimeKHR)\
   X(xrGetVisibilityMaskKHR)\
   X(xrCreateSpatialAnchorMSFT)\
   X(xrCreateSpatialAnchorSpaceMSFT)\
@@ -109,24 +134,40 @@
   X(xrSetInputDeviceStateFloatEXT)\
   X(xrSetInputDeviceStateVector2fEXT)\
   X(xrSetInputDeviceLocationEXT)\
-  X(xrInitializeLoaderKHR)\
   X(xrCreateSpatialGraphNodeSpaceMSFT)\
   X(xrCreateHandTrackerEXT)\
   X(xrDestroyHandTrackerEXT)\
   X(xrLocateHandJointsEXT)\
   X(xrCreateHandMeshSpaceMSFT)\
-  X(xrUpdateHandMeshMSFT)\
-  X(xrGetControllerModelKeyMSFT)\
-  X(xrLoadControllerModelMSFT)\
-  X(xrGetControllerModelPropertiesMSFT)\
-  X(xrGetControllerModelStateMSFT)\
-  X(xrEnumerateDisplayRefreshRatesFB)\
-  X(xrGetDisplayRefreshRateFB)\
-  X(xrRequestDisplayRefreshRateFB)\
-  X(xrCreateSpatialAnchorFromPerceptionAnchorMSFT)\
-  X(xrTryGetPerceptionAnchorFromSpatialAnchorMSFT)\
-  X(xrEnumerateColorSpacesFB)\
-  X(xrSetColorSpaceFB)
+  X(xrUpdateHandMeshMSFT)
+
+#ifdef XR_USE_PLATFORM_ANDROID
+#define XR_FOREACH_ANDROID(X)\
+  X(xrSetAndroidApplicationThreadKHR)\
+  X(xrCreateSwapchainAndroidSurfaceKHR)
+#else
+#define XR_FOREACH_ANDROID(X)
+#endif
+
+#ifdef XR_USE_PLATFORM_WIN32
+#define XR_FOREACH_WIN32(X)\
+  X(xrConvertWin32PerformanceCounterToTimeKHR)\
+  X(xrConvertTimeToWin32PerformanceCounterKHR)
+#else
+#define XR_FOREACH_WIN32(X)
+#endif
+
+#define XR_FOREACH(X)\
+  XR_FOREACH_TIMESPEC(X)\
+  XR_FOREACH_D3D11(X)\
+  XR_FOREACH_ES(X)\
+  XR_FOREACH_VULKAN(X)\
+  XR_FOREACH_D3D12(X)\
+  XR_FOREACH_OPENGL(X)\
+  XR_FOREACH_BASE(X)\
+  XR_FOREACH_ANDROID(X)\
+  XR_FOREACH_WIN32(X)
+// === >8 ===
 
 #define XR_CURRENT_LOADER_API_LAYER_VERSION 1
 #define XR_CURRENT_LOADER_RUNTIME_VERSION 1
@@ -414,10 +455,6 @@ static XrResult unloadRuntime() {
 }
 
 // Entry
-
-LOX_API XrResult XRAPI_CALL xrInitializeLoaderKHR(const XrLoaderInitInfoBaseHeaderKHR* info) {
-  return XR_SUCCESS;
-}
 
 LOX_API XrResult XRAPI_CALL xrEnumerateApiLayerProperties(uint32_t capacity, uint32_t* count, XrApiLayerProperties* properties) {
   return XR_SUCCESS;
