@@ -18,12 +18,7 @@
 
 // OpenXR
 
-#define XR_FOREACH(X)\
-  X(xrGetInstanceProcAddr)\
-  X(xrEnumerateApiLayerProperties)\
-  X(xrEnumerateInstanceExtensionProperties)\
-  X(xrCreateInstance)\
-  X(xrDestroyInstance)\
+#define XR_FOREACH_BASE(X)\
   X(xrResultToString)\
   X(xrStructureTypeToString)\
   X(xrGetInstanceProperties)\
@@ -60,8 +55,6 @@
   X(xrStringToPath)\
   X(xrPathToString)\
   X(xrGetReferenceSpaceBoundsRect)\
-  X(xrSetAndroidApplicationThreadKHR)\
-  X(xrCreateSwapchainAndroidSurfaceKHR)\
   X(xrGetActionStateBoolean)\
   X(xrGetActionStateFloat)\
   X(xrGetActionStateVector2f)\
@@ -76,14 +69,6 @@
   X(xrSyncActions)\
   X(xrEnumerateBoundSourcesForAction)\
   X(xrGetInputSourceLocalizedName)\
-  X(xrGetVulkanInstanceExtensionsKHR)\
-  X(xrGetVulkanDeviceExtensionsKHR)\
-  X(xrGetVulkanGraphicsDeviceKHR)\
-  X(xrGetOpenGLGraphicsRequirementsKHR)\
-  X(xrGetOpenGLESGraphicsRequirementsKHR)\
-  X(xrGetVulkanGraphicsRequirementsKHR)\
-  X(xrGetD3D11GraphicsRequirementsKHR)\
-  X(xrGetD3D12GraphicsRequirementsKHR)\
   X(xrPerfSettingsSetPerformanceLevelEXT)\
   X(xrThermalGetTemperatureTrendEXT)\
   X(xrSetDebugUtilsObjectNameEXT)\
@@ -93,13 +78,6 @@
   X(xrSessionBeginDebugUtilsLabelRegionEXT)\
   X(xrSessionEndDebugUtilsLabelRegionEXT)\
   X(xrSessionInsertDebugUtilsLabelEXT)\
-  X(xrConvertTimeToWin32PerformanceCounterKHR)\
-  X(xrConvertWin32PerformanceCounterToTimeKHR)\
-  X(xrCreateVulkanInstanceKHR)\
-  X(xrCreateVulkanDeviceKHR)\
-  X(xrGetVulkanGraphicsDevice2KHR)\
-  X(xrConvertTimeToTimespecTimeKHR)\
-  X(xrConvertTimespecTimeToTimeKHR)\
   X(xrGetVisibilityMaskKHR)\
   X(xrCreateSpatialAnchorMSFT)\
   X(xrCreateSpatialAnchorSpaceMSFT)\
@@ -123,10 +101,11 @@
   X(xrEnumerateDisplayRefreshRatesFB)\
   X(xrGetDisplayRefreshRateFB)\
   X(xrRequestDisplayRefreshRateFB)\
-  X(xrCreateSpatialAnchorFromPerceptionAnchorMSFT)\
-  X(xrTryGetPerceptionAnchorFromSpatialAnchorMSFT)\
   X(xrEnumerateColorSpacesFB)\
   X(xrSetColorSpaceFB)
+
+#define XR_FOREACH(X)\
+  XR_FOREACH_BASE(X)
 
 #define XR_CURRENT_LOADER_API_LAYER_VERSION 1
 #define XR_CURRENT_LOADER_RUNTIME_VERSION 1

@@ -1,4 +1,6 @@
+#define XR_USE_GRAPHICS_API_OPENGL
 #include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
 #include "jsmn.h"
 #include "lox.h"
 
