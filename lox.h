@@ -1,5 +1,6 @@
-#include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
+#include <stdlib.h>
 #ifdef __linux__
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -206,19 +207,20 @@ typedef XrResult FN_xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInf
 
 // Helpers
 
-
 static struct {
+  bool loaded;
   void* library;
-  XrNegotiateRuntimeRequest runtimeInfo;
-  struct {
-#define LOX_FN(fn) PFN_##fn fn;
-    XR_FOREACH(LOX_FN)
-#undef LOX_FN
-  } dispatch;
-} state;
+  PFN_xrGetInstanceProcAddr load;
+} runtime;
 
-static XrResult loadRuntime() {
-  if (state.library) return XR_SUCCESS;
+#define LOX_FN(fn) PFN_##fn fn;
+static struct {
+  XR_FOREACH(LOX_FN)
+} dispatch;
+#undef LOX_FN
+
+static XrResult lox_load() {
+  if (runtime.loaded) return XR_SUCCESS;
 
   char filename[1024];
   char buffer[4096];
@@ -411,10 +413,10 @@ static XrResult loadRuntime() {
     filename[length] = '\0';
   }
 
-  state.library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
-  if (!state.library) return XR_ERROR_INSTANCE_LOST;
+  runtime.library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
+  if (!runtime.library) return XR_ERROR_INSTANCE_LOST;
 
-  negotiate = dlsym(state.library, "xrNegotiateLoaderRuntimeInterface");
+  negotiate = dlsym(runtime.library, "xrNegotiateLoaderRuntimeInterface");
   if (!negotiate) return XR_ERROR_INSTANCE_LOST;
 #else
 #error "Unsupported platform"
@@ -430,27 +432,29 @@ static XrResult loadRuntime() {
     .maxApiVersion = XR_MAKE_VERSION(1, 0x3ff, 0xfff)
   };
 
-  state.runtimeInfo = (XrNegotiateRuntimeRequest) {
+  XrNegotiateRuntimeRequest runtimeInfo = (XrNegotiateRuntimeRequest) {
     .structType = XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST,
     .structVersion = XR_RUNTIME_INFO_STRUCT_VERSION,
     .structSize = sizeof(XrNegotiateRuntimeRequest)
   };
 
-  XrResult result = negotiate(&loaderInfo, &state.runtimeInfo);
+  XrResult result = negotiate(&loaderInfo, &runtimeInfo);
   if (XR_FAILED(result)) return XR_ERROR_INSTANCE_LOST;
-  if (!state.runtimeInfo.getInstanceProcAddr) return XR_ERROR_FILE_CONTENTS_INVALID;
+  if (!runtimeInfo.getInstanceProcAddr) return XR_ERROR_FILE_CONTENTS_INVALID;
 
+  runtime.load = runtimeInfo.getInstanceProcAddr;
+  runtime.loaded = true;
   return XR_SUCCESS;
 }
 
-static XrResult unloadRuntime() {
-  if (!state.library) return XR_SUCCESS;
+static XrResult lox_unload() {
+  if (!runtime.loaded) return XR_SUCCESS;
 #ifdef __linux__
-  dlclose(state.library);
+  dlclose(runtime.library);
 #else
 #error "Unsupported platform"
 #endif
-  memset(&state, 0, sizeof(state));
+  memset(&runtime, 0, sizeof(runtime));
   return XR_SUCCESS;
 }
 
@@ -473,7 +477,7 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
     return XR_ERROR_API_VERSION_UNSUPPORTED;
   }
 
-  XrResult result = loadRuntime();
+  XrResult result = lox_load();
   if (XR_FAILED(result)) return result;
 
   // TODO check runtime version
@@ -483,15 +487,15 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
   // TODO ensure enabled extensions are supported
 
   PFN_xrCreateInstance rt_xrCreateInstance;
-  result = state.runtimeInfo.getInstanceProcAddr(XR_NULL_HANDLE, "xrCreateInstance", (PFN_xrVoidFunction*) &rt_xrCreateInstance);
-  if (XR_FAILED(result)) return unloadRuntime(), result;
+  result = runtime.load(XR_NULL_HANDLE, "xrCreateInstance", (PFN_xrVoidFunction*) &rt_xrCreateInstance);
+  if (XR_FAILED(result)) return lox_unload(), result;
 
   result = rt_xrCreateInstance(info, instance);
-  if (XR_FAILED(result)) return unloadRuntime(), *instance = XR_NULL_HANDLE, result;
+  if (XR_FAILED(result)) return lox_unload(), *instance = XR_NULL_HANDLE, result;
 
   #define LOX_LOAD(fn)\
-    result = state.runtimeInfo.getInstanceProcAddr(*instance, #fn, (PFN_xrVoidFunction*) &state.dispatch.fn);\
-    if (XR_FAILED(result)) return unloadRuntime(), *instance = XR_NULL_HANDLE, result;
+    result = runtime.load(*instance, #fn, (PFN_xrVoidFunction*) &dispatch.fn);\
+    if (XR_FAILED(result)) return lox_unload(), *instance = XR_NULL_HANDLE, result;
 
   XR_FOREACH(LOX_LOAD)
 
@@ -499,7 +503,7 @@ LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, X
 }
 
 LOX_API XrResult XRAPI_CALL xrDestroyInstance(XrInstance instance) {
-  return unloadRuntime();
+  return lox_unload();
 }
 
 static uint64_t hash64(const void* data, size_t length) {
@@ -512,9 +516,9 @@ static uint64_t hash64(const void* data, size_t length) {
 }
 
 LOX_API XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* p) {
-  if (!instance || !state.library) return XR_ERROR_HANDLE_INVALID;
+  if (!instance || !runtime.loaded) return XR_ERROR_HANDLE_INVALID;
   uint64_t hash = hash64(name, strlen(name));
-  #define LOX_MATCH(fn) if (hash == hash64(#fn, strlen(#fn))) return *(PFN_##fn*) p = state.dispatch.fn, XR_SUCCESS;
+  #define LOX_MATCH(fn) if (hash == hash64(#fn, strlen(#fn))) return *(PFN_##fn*) p = dispatch.fn, XR_SUCCESS;
   XR_FOREACH(LOX_MATCH)
   return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
