@@ -6,9 +6,11 @@
 #include <stdint.h>
 
 int main(int argc, char** argv) {
+  XrResult result;
+
   uint32_t count;
   printf("Querying extension count...\n");
-  XrResult result = xrEnumerateInstanceExtensionProperties(NULL, 0, &count, NULL);
+  result = xrEnumerateInstanceExtensionProperties(NULL, 0, &count, NULL);
   printf("Result %d, %d extensions\n", result, count);
 
   XrExtensionProperties extensions[32];
