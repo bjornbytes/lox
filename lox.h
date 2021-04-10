@@ -465,7 +465,18 @@ LOX_API XrResult XRAPI_CALL xrEnumerateApiLayerProperties(uint32_t capacity, uin
 }
 
 LOX_API XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* layer, uint32_t capacity, uint32_t* count, XrExtensionProperties* properties) {
-  return XR_SUCCESS;
+  if (!count) return XR_ERROR_VALIDATION_FAILURE;
+  if (layer) return XR_ERROR_FEATURE_UNSUPPORTED; // TODO
+
+  XrResult result = lox_load();
+  if (XR_FAILED(result)) return result;
+
+  PFN_xrEnumerateInstanceExtensionProperties rt_xrEnumerateInstanceExtensionProperties;
+  result = runtime.load(XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties", (PFN_xrVoidFunction*) &rt_xrEnumerateInstanceExtensionProperties);
+  if (XR_FAILED(result)) return lox_unload(), result;
+
+  result = rt_xrEnumerateInstanceExtensionProperties(XR_NULL_HANDLE, capacity, count, properties);
+  return result;
 }
 
 LOX_API XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance) {
