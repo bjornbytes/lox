@@ -348,6 +348,7 @@ static XrResult lox_load() {
 
   jsmntok_t* version = NULL;
   jsmntok_t* library = NULL;
+  const char* negotiateSymbol = "xrNegotiateLoaderRuntimeInterface";
 
   for (int i = 1; i < tokenCount; i++) {
     jsmntok_t* token = &tokens[i];
@@ -355,7 +356,6 @@ static XrResult lox_load() {
     size_t length = token->end - token->start;
     token++;
 
-    // TODO parse `instance_extensions` and `functions` keys
     if (length == strlen("file_format_version") && !strncmp(key, "file_format_version", length)) {
       if (token->type != JSMN_STRING) return XR_ERROR_FILE_CONTENTS_INVALID;
       version = token++;
@@ -368,6 +368,26 @@ static XrResult lox_load() {
 
         if (length == strlen("library_path") && !strncmp(key, "library_path", length)) {
           library = token++;
+        } else {
+          for (int n = 1; n > 0; n--, token++) {
+            switch (token->type) {
+              case JSMN_OBJECT: n += 2 * token->size; break;
+              case JSMN_ARRAY: n += token->size; break;
+              default: break;
+            }
+          }
+        }
+      }
+    } else if (length == strlen("functions") && !strncmp(key, "functions", length)) {
+      if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVALID;
+      for (int j = (token++)->size; j > 0; j--) {
+        const char* key = buffer + token->start;
+        size_t keyLength = token->end - token->start;
+        token++;
+
+        if (keyLength == strlen("xrNegotiateLoaderRuntimeInterface") && !strncmp(key, "xrNegotiateLoaderRuntimeInterface", length)) {
+          negotiateSymbol = buffer + token->start;
+          buffer[token->end] = '\0';
         } else {
           for (int n = 1; n > 0; n--, token++) {
             switch (token->type) {
@@ -416,7 +436,7 @@ static XrResult lox_load() {
   runtime.library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
   if (!runtime.library) return XR_ERROR_INSTANCE_LOST;
 
-  negotiate = dlsym(runtime.library, "xrNegotiateLoaderRuntimeInterface");
+  negotiate = dlsym(runtime.library, negotiateSymbol);
   if (!negotiate) return XR_ERROR_INSTANCE_LOST;
 #else
 #error "Unsupported platform"
