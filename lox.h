@@ -488,6 +488,7 @@ LOX_API XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* l
   if (!count) return XR_ERROR_VALIDATION_FAILURE;
   if (layer) return XR_ERROR_FEATURE_UNSUPPORTED; // TODO
 
+  bool loaded = runtime.loaded;
   XrResult result = lox_load();
   if (XR_FAILED(result)) return result;
 
@@ -496,6 +497,7 @@ LOX_API XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* l
   if (XR_FAILED(result)) return lox_unload(), result;
 
   result = rt_xrEnumerateInstanceExtensionProperties(XR_NULL_HANDLE, capacity, count, properties);
+  if (!loaded) lox_unload();
   return result;
 }
 
