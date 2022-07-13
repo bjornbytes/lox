@@ -10,12 +10,16 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
-#ifdef __linux__
+
+#if defined __linux__
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#elif defined _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #else
 #error "Unsupported platform"
 #endif
@@ -69,7 +73,7 @@
 #define XR_FOREACH_OPENGL(X)
 #endif
 
-#define XR_FOREACH_BASE(X)\
+#define XR_FOREACH_CORE(X)\
   X(xrResultToString)\
   X(xrStructureTypeToString)\
   X(xrGetInstanceProperties)\
@@ -119,31 +123,7 @@
   X(xrGetCurrentInteractionProfile)\
   X(xrSyncActions)\
   X(xrEnumerateBoundSourcesForAction)\
-  X(xrGetInputSourceLocalizedName)\
-  X(xrPerfSettingsSetPerformanceLevelEXT)\
-  X(xrThermalGetTemperatureTrendEXT)\
-  X(xrSetDebugUtilsObjectNameEXT)\
-  X(xrCreateDebugUtilsMessengerEXT)\
-  X(xrDestroyDebugUtilsMessengerEXT)\
-  X(xrSubmitDebugUtilsMessageEXT)\
-  X(xrSessionBeginDebugUtilsLabelRegionEXT)\
-  X(xrSessionEndDebugUtilsLabelRegionEXT)\
-  X(xrSessionInsertDebugUtilsLabelEXT)\
-  X(xrGetVisibilityMaskKHR)\
-  X(xrCreateSpatialAnchorMSFT)\
-  X(xrCreateSpatialAnchorSpaceMSFT)\
-  X(xrDestroySpatialAnchorMSFT)\
-  X(xrSetInputDeviceActiveEXT)\
-  X(xrSetInputDeviceStateBoolEXT)\
-  X(xrSetInputDeviceStateFloatEXT)\
-  X(xrSetInputDeviceStateVector2fEXT)\
-  X(xrSetInputDeviceLocationEXT)\
-  X(xrCreateSpatialGraphNodeSpaceMSFT)\
-  X(xrCreateHandTrackerEXT)\
-  X(xrDestroyHandTrackerEXT)\
-  X(xrLocateHandJointsEXT)\
-  X(xrCreateHandMeshSpaceMSFT)\
-  X(xrUpdateHandMeshMSFT)
+  X(xrGetInputSourceLocalizedName)
 
 #ifdef XR_USE_PLATFORM_ANDROID
 #define XR_FOREACH_ANDROID(X)\
@@ -168,10 +148,128 @@
   XR_FOREACH_VULKAN(X)\
   XR_FOREACH_D3D12(X)\
   XR_FOREACH_OPENGL(X)\
-  XR_FOREACH_BASE(X)\
+  XR_FOREACH_CORE(X)\
   XR_FOREACH_ANDROID(X)\
   XR_FOREACH_WIN32(X)
 // === >8 ===
+
+// Helpers
+
+static XrResult lox_load_runtime();
+static XrResult lox_unload_runtime();
+static XrResult lox_load_layers();
+static XrResult lox_unload_layers();
+static uint64_t lox_hash(const void* data, size_t length);
+
+static struct {
+  bool loaded;
+  void* library;
+  PFN_xrGetInstanceProcAddr load;
+} runtime;
+
+static struct {
+  bool loaded;
+  uint32_t count;
+} layers;
+
+#define LOX_FN(fn) PFN_##fn fn;
+static struct {
+  XR_FOREACH(LOX_FN)
+} dispatch;
+#undef LOX_FN
+
+// Entry
+
+XRAPI_ATTR XrResult XRAPI_CALL xrEnumerateApiLayerProperties(uint32_t capacity, uint32_t* count, XrApiLayerProperties* properties) {
+  if (!count || (capacity > 0 && !properties)) return XR_ERROR_VALIDATION_FAILURE;
+
+  XrResult result = lox_load_layers();
+  if (XR_FAILED(result)) return result;
+
+  return XR_SUCCESS;
+}
+
+XRAPI_ATTR XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* layer, uint32_t capacity, uint32_t* count, XrExtensionProperties* properties) {
+  if (!count) return XR_ERROR_VALIDATION_FAILURE;
+
+  XrResult result;
+
+  result = lox_load_layers();
+  if (XR_FAILED(result)) return result;
+
+  if (layer) {
+    //
+    return XR_SUCCESS;
+  }
+
+  result = lox_load_runtime();
+  if (XR_FAILED(result)) return result;
+
+  PFN_xrEnumerateInstanceExtensionProperties rt_xrEnumerateInstanceExtensionProperties;
+  result = runtime.load(XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties", (PFN_xrVoidFunction*) &rt_xrEnumerateInstanceExtensionProperties);
+  if (XR_FAILED(result)) return lox_unload_runtime(), result;
+
+  result = rt_xrEnumerateInstanceExtensionProperties(XR_NULL_HANDLE, capacity, count, properties);
+  return result;
+}
+
+XRAPI_ATTR XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance) {
+  if (!info || !instance || info->type != XR_TYPE_INSTANCE_CREATE_INFO) {
+    return XR_ERROR_VALIDATION_FAILURE;
+  }
+
+  if (info->applicationInfo.apiVersion > XR_CURRENT_API_VERSION) {
+    return XR_ERROR_API_VERSION_UNSUPPORTED;
+  }
+
+  XrResult result;
+
+  result = lox_load_layers();
+  if (XR_FAILED(result)) return result;
+
+  result = lox_load_runtime();
+  if (XR_FAILED(result)) return result;
+
+  PFN_xrCreateInstance rt_xrCreateInstance;
+  result = runtime.load(XR_NULL_HANDLE, "xrCreateInstance", (PFN_xrVoidFunction*) &rt_xrCreateInstance);
+  if (XR_FAILED(result)) return lox_unload_runtime(), result;
+
+  result = rt_xrCreateInstance(info, instance);
+  if (XR_FAILED(result)) return lox_unload_runtime(), *instance = XR_NULL_HANDLE, result;
+
+  #define LOX_LOAD(fn)\
+    result = runtime.load(*instance, #fn, (PFN_xrVoidFunction*) &dispatch.fn);\
+    if (XR_FAILED(result)) return lox_unload_runtime(), *instance = XR_NULL_HANDLE, result;
+
+  XR_FOREACH_CORE(LOX_LOAD)
+
+  return XR_SUCCESS;
+}
+
+XRAPI_ATTR XrResult XRAPI_CALL xrDestroyInstance(XrInstance instance) {
+  return lox_unload_runtime();
+}
+
+XRAPI_ATTR XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* p) {
+  uint64_t hash = lox_hash(name, strlen(name));
+
+  if (!instance) {
+    #define LOX_MATCH_BUILTIN(fn) if (hash == lox_hash(#fn, strlen(#fn))) return *(PFN_##fn*) p = fn, XR_SUCCESS;
+    LOX_MATCH_BUILTIN(xrEnumerateApiLayerProperties)
+    LOX_MATCH_BUILTIN(xrEnumerateInstanceExtensionProperties)
+    LOX_MATCH_BUILTIN(xrCreateInstance)
+    return XR_ERROR_HANDLE_INVALID;
+  }
+
+  if (!runtime.loaded) return XR_ERROR_HANDLE_INVALID;
+  #define LOX_MATCH(fn) if (hash == lox_hash(#fn, strlen(#fn))) return *(PFN_##fn*) p = dispatch.fn, XR_SUCCESS;
+  XR_FOREACH(LOX_MATCH)
+  return XR_ERROR_FUNCTION_UNSUPPORTED;
+}
+
+// Helpers
+
+#define LOX_PATH_MAX 1024
 
 #define XR_CURRENT_LOADER_API_LAYER_VERSION 1
 #define XR_CURRENT_LOADER_RUNTIME_VERSION 1
@@ -206,35 +304,26 @@ typedef struct XrNegotiateRuntimeRequest {
   PFN_xrGetInstanceProcAddr getInstanceProcAddr;
 } XrNegotiateRuntimeRequest;
 
-typedef XrResult FN_xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNegotiateRuntimeRequest* runtimeInfo);
+typedef XrResult PFN_xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNegotiateRuntimeRequest* runtimeInfo);
+PFN_xrNegotiateLoaderRuntimeInterface* negotiate;
 
-// Helpers
-
-static struct {
-  bool loaded;
-  void* library;
-  PFN_xrGetInstanceProcAddr load;
-} runtime;
-
-#define LOX_FN(fn) PFN_##fn fn;
-static struct {
-  XR_FOREACH(LOX_FN)
-} dispatch;
-#undef LOX_FN
-
-static XrResult lox_load() {
+static XrResult lox_load_runtime() {
   if (runtime.loaded) return XR_SUCCESS;
 
-  char filename[1024];
+  char filename[LOX_PATH_MAX];
   char buffer[4096];
-  const char* leaf = "/openxr/1/active_runtime.json";
+  size_t size;
+
+  // Find manifest
 
 #if defined __linux__
+  const char* leaf = "/openxr/1/active_runtime.json";
+
   int fd = -1;
 
   if (fd < 0) {
-    const char* path = getenv("XR_RUNTIME_JSON");
-    if (path) fd = open(path, O_RDONLY);
+    const char* env = getenv("XR_RUNTIME_JSON");
+    if (env) fd = open(env, O_RDONLY);
   }
 
   if (fd < 0) {
@@ -313,7 +402,7 @@ static XrResult lox_load() {
     return XR_ERROR_FILE_ACCESS_ERROR;
   }
 
-  size_t size = st.st_size;
+  size = st.st_size;
   if (size > sizeof(buffer)) {
     close(fd);
     return XR_ERROR_OUT_OF_MEMORY;
@@ -329,9 +418,41 @@ static XrResult lox_load() {
     n += bytes;
   }
   close(fd);
-#else
-#error "Unsupported platform"
+#elif defined _WIN32
+  WCHAR wfilename[LOX_PATH_MAX];
+  DWORD dsize = GetEnvironmentVariableW(L"XR_RUNTIME_JSON", wfilename, LOX_PATH_MAX);
+
+  if (dsize >= LOX_PATH_MAX) {
+    return XR_ERROR_OUT_OF_MEMORY;
+  }
+
+  if (dsize == 0 || dsize == 1) {
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime", RRF_RT_REG_SZ, NULL, wfilename, &dsize)) {
+      // TODO return XR_ERROR_OUT_OF_MEMORY if we get ERROR_MORE_DATA, or just heap allocate
+      return XR_ERROR_RUNTIME_UNAVAILABLE;
+    }
+  }
+
+  // Stash a utf8 version of the filename for later
+  if (!WideCharToMultiByte(CP_UTF8, 0, wfilename, -1, filename, sizeof(filename), NULL, NULL)) {
+    return XR_ERROR_OUT_OF_MEMORY;
+  }
+
+  HANDLE handle = CreateFileW(wfilename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (handle == INVALID_HANDLE_VALUE) {
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  if (!ReadFile(handle, buffer, sizeof(buffer), &dsize, NULL)) {
+    CloseHandle(handle);
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  CloseHandle(handle);
+  size = dsize;
 #endif
+
+  // Parse JSON
 
   jsmntok_t tokens[256];
   jsmn_parser parser;
@@ -359,6 +480,8 @@ static XrResult lox_load() {
     size_t length = token->end - token->start;
     token++;
 
+    #define SKIP(t) for (int n = 1; n > 0; n += (t->size << (t->type == JSMN_OBJECT)) - 1, t++);
+
     if (length == strlen("file_format_version") && !strncmp(key, "file_format_version", length)) {
       if (token->type != JSMN_STRING) return XR_ERROR_FILE_CONTENTS_INVALID;
       version = token++;
@@ -371,79 +494,93 @@ static XrResult lox_load() {
 
         if (length == strlen("library_path") && !strncmp(key, "library_path", length)) {
           library = token++;
-        } else {
-          for (int n = 1; n > 0; n--, token++) {
-            switch (token->type) {
-              case JSMN_OBJECT: n += 2 * token->size; break;
-              case JSMN_ARRAY: n += token->size; break;
-              default: break;
-            }
-          }
-        }
-      }
-    } else if (length == strlen("functions") && !strncmp(key, "functions", length)) {
-      if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVALID;
-      for (int j = (token++)->size; j > 0; j--) {
-        const char* key = buffer + token->start;
-        size_t keyLength = token->end - token->start;
-        token++;
+        } else if (length == strlen("functions") && !strncmp(key, "functions", length)) {
+          if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVALID;
+          for (int j = (token++)->size; j > 0; j--) {
+            const char* key = buffer + token->start;
+            size_t keyLength = token->end - token->start;
+            token++;
 
-        if (keyLength == strlen("xrNegotiateLoaderRuntimeInterface") && !strncmp(key, "xrNegotiateLoaderRuntimeInterface", length)) {
-          negotiateSymbol = buffer + token->start;
-          buffer[token->end] = '\0';
-        } else {
-          for (int n = 1; n > 0; n--, token++) {
-            switch (token->type) {
-              case JSMN_OBJECT: n += 2 * token->size; break;
-              case JSMN_ARRAY: n += token->size; break;
-              default: break;
+            if (keyLength == strlen("xrNegotiateLoaderRuntimeInterface") && !strncmp(key, "xrNegotiateLoaderRuntimeInterface", length)) {
+              negotiateSymbol = buffer + token->start;
+              buffer[token->end] = '\0';
+            } else {
+              SKIP(token);
             }
           }
+        } else {
+          SKIP(token);
         }
       }
     } else {
-      for (int n = 1; n > 0; n--, token++) {
-        switch (token->type) {
-          case JSMN_OBJECT: n += 2 * token->size; break;
-          case JSMN_ARRAY: n += token->size; break;
-          default: break;
-        }
-      }
+      SKIP(token);
     }
+
+    #undef SKIP
   }
+
+  // Validate JSON
 
   if (!version || !library || strncmp(buffer + version->start, "1.0.0", version->end - version->start)) {
     return XR_ERROR_FILE_CONTENTS_INVALID;
   }
 
-  FN_xrNegotiateLoaderRuntimeInterface* negotiate;
+  // Synthesize full runtime library name
 
-#ifdef __linux__
+  char* lib = buffer + library->start;
   size_t length = library->end - library->start;
   if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
 
-  if (buffer[library->start] == '/') {
-    memcpy(filename, buffer + library->start, length);
+  for (size_t i = 0, j = 0; i < length; i++, j++) {
+    if (lib[i] == '\\') {
+      switch (lib[i + 1]) {
+        case '\\': i++; break;
+        default: break;
+      }
+    }
+  }
+
+  if (lib[0] == '/' || lib[0] == '\\' || (((lib[0] | 32) - 'a') < 26 && lib[1] == ':' && lib[2] == '\\')) {
+    memcpy(filename, lib, length);
     filename[length] = '\0';
-  } else if (memchr(buffer + library->start, '/', length)) {
+  } else if (memchr(lib, '/', length)) {
     char* slash = strrchr(filename, '/');
     slash = slash ? slash + 1 : filename;
     if (slash - filename + length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
-    memcpy(slash, buffer + library->start, length);
+    memcpy(slash, lib, length);
+    slash[length] = '\0';
+  } else if (memchr(lib, '\\', length)) {
+    char* slash = strrchr(filename, '\\');
+    slash = slash ? slash + 1 : filename;
+    if (slash - filename + length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+    memcpy(slash, lib, length);
     slash[length] = '\0';
   } else {
-    memcpy(filename, buffer + library->start, length);
+    memcpy(filename, lib, length);
     filename[length] = '\0';
   }
 
-  runtime.library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
-  if (!runtime.library) return XR_ERROR_INSTANCE_LOST;
+  // Open library, load negotiate function
 
-  negotiate = dlsym(runtime.library, negotiateSymbol);
-  if (!negotiate) return XR_ERROR_INSTANCE_LOST;
-#else
-#error "Unsupported platform"
+#if defined __linux__
+  if ((runtime.library = dlopen(filename, RTLD_LAZY | RTLD_LOCAL)) == NULL) {
+    return XR_ERROR_INSTANCE_LOST;
+  } else if ((negotiate = dlsym(runtime.library, negotiateSymbol)) == NULL) {
+    return dlclose(runtime.library), XR_ERROR_INSTANCE_LOST;
+  }
+#elif defined _WIN32
+  if (!MultiByteToWideChar(CP_UTF8, 0, filename, -1, wfilename, sizeof(wfilename) / sizeof(wfilename[0]))) {
+    return XR_ERROR_OUT_OF_MEMORY;
+  }
+
+  if ((runtime.library = LoadLibraryW(wfilename)) == NULL) {
+    return XR_ERROR_INSTANCE_LOST;
+  } else if ((negotiate = (PFN_xrNegotiateLoaderRuntimeInterface*) GetProcAddress(runtime.library, negotiateSymbol)) == NULL) {
+    return FreeLibrary(runtime.library), XR_ERROR_INSTANCE_LOST;
+  }
 #endif
+
+  // Negotiate, fetch getInstanceProcAddr
 
   XrNegotiateLoaderInfo loaderInfo = {
     .structType = XR_LOADER_INTERFACE_STRUCT_LOADER_INFO,
@@ -455,7 +592,7 @@ static XrResult lox_load() {
     .maxApiVersion = XR_MAKE_VERSION(1, 0x3ff, 0xfff)
   };
 
-  XrNegotiateRuntimeRequest runtimeInfo = (XrNegotiateRuntimeRequest) {
+  XrNegotiateRuntimeRequest runtimeInfo = {
     .structType = XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST,
     .structVersion = XR_RUNTIME_INFO_STRUCT_VERSION,
     .structSize = sizeof(XrNegotiateRuntimeRequest)
@@ -470,93 +607,219 @@ static XrResult lox_load() {
   return XR_SUCCESS;
 }
 
-static XrResult lox_unload() {
+// Pardon the wacky ifdef, just didn't wanna do the stupid windows utf conversion
+#if defined __linux__
+static XrResult lox_load_layer(const char* filename, bool implicit) {
+  char buffer[4096];
+#elif defined _WIN32
+static XrResult lox_load_layer(const WCHAR* wfilename, bool implicit) {
+  char buffer[4096];
+
+  HANDLE handle = CreateFileW(wfilename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (handle == INVALID_HANDLE_VALUE) {
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  DWORD size;
+  if (!ReadFile(handle, buffer, sizeof(buffer), &size, NULL)) {
+    CloseHandle(handle);
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  CloseHandle(handle);
+#endif
+
+  // Parse JSON
+
+  jsmntok_t tokens[256];
+  jsmn_parser parser;
+  jsmn_init(&parser);
+  int tokenCount = jsmn_parse(&parser, buffer, size, tokens, sizeof(tokens) / sizeof(tokens[0]));
+  switch (tokenCount) {
+    case JSMN_ERROR_NOMEM: return XR_ERROR_OUT_OF_MEMORY;
+    case JSMN_ERROR_INVAL: return XR_ERROR_FILE_CONTENTS_INVALID;
+    case JSMN_ERROR_PART: return XR_ERROR_FILE_CONTENTS_INVALID;
+    case 0: return XR_ERROR_FILE_CONTENTS_INVALID;
+    default: break;
+  }
+
+  if (tokens[0].type != JSMN_OBJECT) {
+    return XR_ERROR_FILE_CONTENTS_INVALID;
+  }
+
+  jsmntok_t* fileVersion = NULL;
+  jsmntok_t* specVersion = NULL;
+  jsmntok_t* layerVersion = NULL;
+  jsmntok_t* library = NULL;
+  jsmntok_t* name = NULL;
+  jsmntok_t* desc = NULL;
+  jsmntok_t* extensions = NULL;
+  jsmntok_t* envEnable = NULL;
+  jsmntok_t* envDisable = NULL;
+  const char* negotiateSymbol = "xrNegotiateLoaderApiLayerInterface";
+
+  for (int i = 1; i < tokenCount; i++) {
+    jsmntok_t* token = &tokens[i];
+    const char* key = buffer + token->start;
+    size_t length = token->end - token->start;
+    token++;
+
+    #define SKIP(t) for (int n = 1; n > 0; n += (t->size << (t->type == JSMN_OBJECT)) - 1, t++);
+
+    if (length == strlen("file_format_version") && !strncmp(key, "file_format_version", length)) {
+      if (token->type != JSMN_STRING) return XR_ERROR_FILE_CONTENTS_INVALID;
+      fileVersion = token++;
+    } else if (length == strlen("api_layer") && !strncmp(key, "api_layer", length)) {
+      if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVALID;
+      for (int j = (token++)->size; j > 0; j--) {
+        const char* key = buffer + token->start;
+        size_t length = token->end - token->start;
+        token++;
+
+        if (length == strlen("library_path") && !strncmp(key, "library_path", length)) {
+          library = token++;
+        } else if (length == strlen("functions") && !strncmp(key, "functions", length)) {
+          if (token->type != JSMN_OBJECT) return XR_ERROR_FILE_CONTENTS_INVALID;
+          for (int j = (token++)->size; j > 0; j--) {
+            const char* key = buffer + token->start;
+            size_t keyLength = token->end - token->start;
+            token++;
+
+            if (keyLength == strlen("xrNegotiateLoaderApiLayerInterface") && !strncmp(key, "xrNegotiateLoaderApiLayerInterface", length)) {
+              negotiateSymbol = buffer + token->start;
+              buffer[token->end] = '\0';
+            } else {
+              SKIP(token);
+            }
+          }
+        } else {
+          SKIP(token);
+        }
+      }
+    } else {
+      SKIP(token);
+    }
+
+    #undef SKIP
+  }
+
+  // Validate JSON
+
+  if (!fileVersion || !library || strncmp(buffer + fileVersion->start, "1.0.0", fileVersion->end - fileVersion->start)) {
+    return XR_ERROR_FILE_CONTENTS_INVALID;
+  }
+
+  // open file
+  // read file
+  // close file
+  // parse json
+  // validate
+  // append to list
+  return XR_SUCCESS;
+}
+
+static XrResult lox_load_layers() {
+  if (layers.loaded) return XR_SUCCESS;
+
+#if defined __linux__
+#elif defined _WIN32
+  DWORD length = LOX_PATH_MAX;
+  WCHAR wfilename[LOX_PATH_MAX];
+  LONG status;
+  HKEY key;
+
+  // Load implicit layers from registry
+  status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1\\ApiLayers\\Implicit", 0, KEY_QUERY_VALUE, &key);
+  if (status == ERROR_SUCCESS) {
+    for (uint32_t i = 0; status != ERROR_NO_MORE_ITEMS; i++) {
+      DWORD type;
+      DWORD disabled;
+      DWORD size = sizeof(disabled);
+      length = LOX_PATH_MAX;
+      status = RegEnumValueW(key, i, wfilename, &length, NULL, &type, (LPBYTE) &disabled, &size);
+      if (status == ERROR_SUCCESS && type == REG_DWORD && !disabled) {
+        lox_load_layer(wfilename, true);
+      }
+    }
+    RegCloseKey(key);
+  }
+
+  length = GetEnvironmentVariableW(L"XR_API_LAYER_PATH", wfilename, length);
+
+  if (length >= LOX_PATH_MAX) {
+    return XR_ERROR_OUT_OF_MEMORY;
+  }
+
+  // If path was not overridden by an environment variable, load explicit layers from registry
+  if (length == 0 || length == 1) {
+    status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1\\ApiLayers\\Explicit", 0, KEY_QUERY_VALUE, &key);
+    if (status == ERROR_SUCCESS) {
+      for (uint32_t i = 0; status != ERROR_NO_MORE_ITEMS; i++) {
+        DWORD type;
+        DWORD disabled;
+        DWORD size = sizeof(disabled);
+        length = LOX_PATH_MAX;
+        status = RegEnumValueW(key, i, wfilename, &length, NULL, &type, (LPBYTE) &disabled, &size);
+        if (status == ERROR_SUCCESS && type == REG_DWORD && !disabled) {
+          lox_load_layer(wfilename, false);
+        }
+      }
+      RegCloseKey(key);
+    }
+    return XR_SUCCESS;
+  }
+
+  // Otherwise, glob all JSON files in all directories in the environment variable
+  /*for (;;) {
+    char* sep = strchr(dirs, ';');
+    if (!sep) sep = strchr(dirs, '\0');
+
+    if (sep == dirs) {
+      dirs++;
+      continue;
+    }
+
+    size_t dirLength = sep - dirs;
+    size_t length = dirLength + strlen(leaf);
+    if (length >= sizeof(filename)) return XR_ERROR_OUT_OF_MEMORY;
+    memcpy(filename, dirs, dirLength);
+    strcpy(filename + dirLength, leaf);
+
+    fd = open(filename, O_RDONLY);
+    if (fd >= 0) break;
+
+    if (*sep == '\0') {
+      break;
+    } else {
+      dirs = sep + 1;
+    }
+  }*/
+  return true;
+#endif
+}
+
+static XrResult lox_unload_runtime() {
   if (!runtime.loaded) return XR_SUCCESS;
-#ifdef __linux__
+#if defined __linux__
   dlclose(runtime.library);
-#else
-#error "Unsupported platform"
+#elif defined _WIN32
+  FreeLibrary(runtime.library);
 #endif
   memset(&runtime, 0, sizeof(runtime));
   return XR_SUCCESS;
 }
 
-// Entry
-
-XR_APIATTR XrResult XRAPI_CALL xrEnumerateApiLayerProperties(uint32_t capacity, uint32_t* count, XrApiLayerProperties* properties) {
+static XrResult lox_unload_layers() {
   return XR_SUCCESS;
 }
 
-XR_APIATTR XrResult XRAPI_CALL xrEnumerateInstanceExtensionProperties(const char* layer, uint32_t capacity, uint32_t* count, XrExtensionProperties* properties) {
-  if (!count) return XR_ERROR_VALIDATION_FAILURE;
-  if (layer) return XR_ERROR_FEATURE_UNSUPPORTED; // TODO
-
-  bool loaded = runtime.loaded;
-  XrResult result = lox_load();
-  if (XR_FAILED(result)) return result;
-
-  PFN_xrEnumerateInstanceExtensionProperties rt_xrEnumerateInstanceExtensionProperties;
-  result = runtime.load(XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties", (PFN_xrVoidFunction*) &rt_xrEnumerateInstanceExtensionProperties);
-  if (XR_FAILED(result)) return lox_unload(), result;
-
-  result = rt_xrEnumerateInstanceExtensionProperties(XR_NULL_HANDLE, capacity, count, properties);
-  if (!loaded) lox_unload();
-  return result;
-}
-
-XR_APIATTR XrResult XRAPI_CALL xrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance) {
-  if (!info || !instance || info->type != XR_TYPE_INSTANCE_CREATE_INFO) {
-    return XR_ERROR_VALIDATION_FAILURE;
-  }
-
-  if (info->applicationInfo.apiVersion > XR_CURRENT_API_VERSION) {
-    return XR_ERROR_API_VERSION_UNSUPPORTED;
-  }
-
-  XrResult result = lox_load();
-  if (XR_FAILED(result)) return result;
-
-  // TODO check runtime version
-
-  // TODO load api layers
-
-  // TODO ensure enabled extensions are supported
-
-  PFN_xrCreateInstance rt_xrCreateInstance;
-  result = runtime.load(XR_NULL_HANDLE, "xrCreateInstance", (PFN_xrVoidFunction*) &rt_xrCreateInstance);
-  if (XR_FAILED(result)) return lox_unload(), result;
-
-  result = rt_xrCreateInstance(info, instance);
-  if (XR_FAILED(result)) return lox_unload(), *instance = XR_NULL_HANDLE, result;
-
-  #define LOX_LOAD(fn)\
-    result = runtime.load(*instance, #fn, (PFN_xrVoidFunction*) &dispatch.fn);\
-    if (XR_FAILED(result)) return lox_unload(), *instance = XR_NULL_HANDLE, result;
-
-  XR_FOREACH(LOX_LOAD)
-
-  return XR_SUCCESS;
-}
-
-XR_APIATTR XrResult XRAPI_CALL xrDestroyInstance(XrInstance instance) {
-  return lox_unload();
-}
-
-static uint64_t hash64(const void* data, size_t length) {
+static uint64_t lox_hash(const void* data, size_t length) {
   const uint8_t* bytes = (const uint8_t*) data;
   uint64_t hash = 0xcbf29ce484222325;
   for (size_t i = 0; i < length; i++) {
     hash = (hash ^ bytes[i]) * 0x100000001b3;
   }
   return hash;
-}
-
-XR_APIATTR XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* p) {
-  if (!instance || !runtime.loaded) return XR_ERROR_HANDLE_INVALID;
-  uint64_t hash = hash64(name, strlen(name));
-  #define LOX_MATCH(fn) if (hash == hash64(#fn, strlen(#fn))) return *(PFN_##fn*) p = dispatch.fn, XR_SUCCESS;
-  XR_FOREACH(LOX_MATCH)
-  return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
 
 #endif // LOX_IMPLEMENTATION
