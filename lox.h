@@ -1,3 +1,12 @@
+#ifndef LOX_H_
+#define LOX_H_
+
+#ifndef OPENXR_H_
+#error "OpenXR must be included before including lox"
+#endif
+
+#ifdef LOX_IMPLEMENTATION
+
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
@@ -549,3 +558,6 @@ XR_APIATTR XrResult XRAPI_CALL xrGetInstanceProcAddr(XrInstance instance, const 
   XR_FOREACH(LOX_MATCH)
   return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
+
+#endif // LOX_IMPLEMENTATION
+#endif // LOX_H_
