@@ -20,31 +20,54 @@ groups = {}
 
 for group, body in xml:gmatch('<extension[^\n]+protect="([%w_]+)"[^\n]*>(.-)</extension>') do
   for fn in body:gmatch('<command name="(%w+)"/>') do
-    groups[group] = groups[group] or {}
+    if not groups[group] then
+      table.insert(groups, group)
+      groups[group] = {}
+    end
+
     table.insert(groups[group], fn)
     ignore[fn] = true
   end
 end
 
-groups.BASE = {}
+groups.CORE = {}
+table.insert(groups, 'CORE')
 for command in xml:gmatch('<command.-</command>') do
   local fn = command:match('<proto.-<name>(%w+)')
   if not ignore[fn] and not command:match('alias') then
-    table.insert(groups.BASE, fn)
+    table.insert(groups.CORE, fn)
   end
 end
 
+order = {
+  CORE = 1,
+  TIMESPEC = 2,
+  PLATFORM = 3,
+  GRAPHICS = 4
+}
+
+table.sort(groups, function(a, b)
+  local oa, ob = math.huge, math.huge
+
+  for pattern, rank in pairs(order) do
+    if a:match(pattern) then oa = rank end
+    if b:match(pattern) then ob = rank end
+  end
+
+  return oa == ob and a < b or oa < ob
+end)
+
 out = '// === 8< ===\n'
-for group, t in pairs(groups) do
-  if next(t) then
+for i, group in ipairs(groups) do
+  if next(groups[group]) then
     local name = group:match('[^_]+$')
     local macro = { ('#define XR_FOREACH_%s(X)\\\n'):format(name) }
-    for i, fn in ipairs(t) do
+    for i, fn in ipairs(groups[group]) do
       table.insert(macro, ('  X(%s)\\\n'):format(fn))
     end
     macro = table.concat(macro, ''):sub(1, -3) .. '\n'
 
-    if group ~= 'BASE' then
+    if group ~= 'CORE' then
       macro = ('#ifdef %s\n%s#else\n#define XR_FOREACH_%s(X)\n#endif\n'):format(group, macro, name)
     end
 
@@ -53,7 +76,7 @@ for group, t in pairs(groups) do
 end
 
 out = out .. '#define XR_FOREACH(X)\\\n'
-for group in pairs(groups) do
+for i, group in ipairs(groups) do
   local name = group:match('[^_]+$')
   out = out .. '  XR_FOREACH_' .. name .. '(X)\\\n'
 end
