@@ -1,6 +1,8 @@
+#define XR_NO_PROTOTYPES
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include "jsmn.h"
+#define LOX_IMPLEMENTATION
 #include "lox.h"
 #include <stdio.h>
 #include <stdint.h>
