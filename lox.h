@@ -611,6 +611,35 @@ static XrResult lox_load_runtime() {
 #if defined __linux__
 static XrResult lox_load_layer(const char* filename, bool implicit) {
   char buffer[4096];
+  size_t size;
+
+  int fd = open(filename, O_RDONLY);
+  if (fd < 0) {
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    close(fd);
+    return XR_ERROR_FILE_ACCESS_ERROR;
+  }
+
+  size = st.st_size;
+  if (size > sizeof(buffer)) {
+    close(fd);
+    return XR_ERROR_OUT_OF_MEMORY;
+  }
+
+  size_t n = 0;
+  while (n < size) {
+    ssize_t bytes = read(fd, buffer + n, size - n);
+    if (bytes < 0) {
+      close(fd);
+      return XR_ERROR_FILE_ACCESS_ERROR;
+    }
+    n += bytes;
+  }
+  close(fd);
 #elif defined _WIN32
 static XrResult lox_load_layer(const WCHAR* wfilename, bool implicit) {
   char buffer[4096];
