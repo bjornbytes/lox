@@ -61,24 +61,24 @@ out = '// === 8< ===\n'
 for i, group in ipairs(groups) do
   if next(groups[group]) then
     local name = group:match('[^_]+$')
-    local macro = { ('#define XR_FOREACH_%s(X)\\\n'):format(name) }
+    local macro = { ('#define LOX_FOREACH_%s(X)\\\n'):format(name) }
     for i, fn in ipairs(groups[group]) do
       table.insert(macro, ('  X(%s)\\\n'):format(fn))
     end
     macro = table.concat(macro, ''):sub(1, -3) .. '\n'
 
     if group ~= 'CORE' then
-      macro = ('#ifdef %s\n%s#else\n#define XR_FOREACH_%s(X)\n#endif\n'):format(group, macro, name)
+      macro = ('#ifdef %s\n%s#else\n#define LOX_FOREACH_%s(X)\n#endif\n'):format(group, macro, name)
     end
 
     out = out .. macro .. '\n'
   end
 end
 
-out = out .. '#define XR_FOREACH(X)\\\n'
+out = out .. '#define LOX_FOREACH(X)\\\n'
 for i, group in ipairs(groups) do
   local name = group:match('[^_]+$')
-  out = out .. '  XR_FOREACH_' .. name .. '(X)\\\n'
+  out = out .. '  LOX_FOREACH_' .. name .. '(X)\\\n'
 end
 out = out:sub(1, -3) .. '\n// === >8 ==='
 
